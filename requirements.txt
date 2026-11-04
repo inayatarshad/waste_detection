@@ -1,0 +1,8 @@
+# torch, torchvision, numpy, pillow, scikit-learn, matplotlib, pandas, folium, ipywidgets
+# are preinstalled on Google Colab.
+timm>=1.0
+pyproj>=3.6
+onnx>=1.16
+onnxruntime>=1.18
+requests
+tqdm

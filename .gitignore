@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+# data, weights and run outputs live on Google Drive, not in git
+data/
+runs/
+*.pt
+*.pth
+*.onnx
+*.zip
+*.tar
+*.bundle
