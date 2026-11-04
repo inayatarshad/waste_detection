@@ -38,6 +38,7 @@ class ClsConfig:
     seed: int = 0
     max_steps_per_epoch: int | None = None   # for quick smoke tests
     init_from: str | None = None             # start from an earlier checkpoint (fine-tuning)
+    resume: bool = True                      # continue from out_dir/last.pt after a Colab disconnect
     types: list = field(default_factory=list)
 
 
@@ -129,8 +130,15 @@ def train_classifier(cfg: ClsConfig, train_ds, val_ds, out_dir, device=None, log
         opt, lambda s: (s + 1) / warm if s < warm else 0.5 * (1 + math.cos(math.pi * (s - warm) / max(1, total - warm))))
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device != "cpu")
 
-    history, best = [], {"score": -1.0}
-    for epoch in range(cfg.epochs):
+    history, best, start = [], {"score": -1.0}, 0
+    last = out / "last.pt"
+    if cfg.resume and last.exists():
+        st = torch.load(last, map_location=device, weights_only=False)
+        model.load_state_dict(st["model"]); opt.load_state_dict(st["opt"])
+        sched.load_state_dict(st["sched"]); scaler.load_state_dict(st["scaler"])
+        history, best, start = st["history"], st["best"], st["epoch"]
+        log(f"resumed from {last}: {start} of {cfg.epochs} epochs already done (best so far: epoch {best.get('epoch')})")
+    for epoch in range(start, cfg.epochs):
         model.train(); train_ds.epoch = epoch
         t0, losses = time.time(), []
         for step, (x, yw, yt, mk) in enumerate(dl):
@@ -160,16 +168,36 @@ def train_classifier(cfg: ClsConfig, train_ds, val_ds, out_dir, device=None, log
         if ap > best["score"]:
             best = {"score": ap, "epoch": epoch + 1}
             torch.save({"model": model.state_dict(), "config": asdict(cfg), "types": types}, out / "best.pt")
-    (out / "history.json").write_text(json.dumps(history, indent=2))
+        # everything needed to continue after a disconnect (written to a temp file first, so a
+        # disconnect during the save cannot leave a broken checkpoint)
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "scaler": scaler.state_dict(), "epoch": epoch + 1, "history": history, "best": best},
+                   out / "last.pt.tmp")
+        (out / "last.pt.tmp").replace(last)
+        (out / "history.json").write_text(json.dumps(history, indent=2))
 
+    res = finalize_best(cfg, val_ds, out, device, log, best_epoch=best.get("epoch"))
+    res["history"] = history
+    return res
+
+
+def finalize_best(cfg: ClsConfig, val_ds, out_dir, device=None, log=print, best_epoch=None) -> dict:
+    """Load best.pt, choose the decision thresholds on validation and store them in best.pt.
+    Also usable on its own when training stopped early but best.pt exists."""
+    out = Path(out_dir)
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(out / "best.pt", map_location=device, weights_only=False)
+    model = WasteClassifier(cfg.backbone, n_types=len(cfg.types), pretrained=False).to(device)
     model.load_state_dict(ckpt["model"])
     vp = predict(model, val_ds, cfg.batch_size * 2, device, tta=cfg.tta, num_workers=cfg.num_workers, amp=cfg.amp)
-    thr = choose_thresholds(vp, types)
-    ckpt["thresholds"] = thr; ckpt["best_epoch"] = best["epoch"]
+    thr = choose_thresholds(vp, cfg.types)
+    if best_epoch is None and (out / "history.json").exists():
+        h = json.loads((out / "history.json").read_text())
+        best_epoch = max(h, key=lambda r: r["val_ap"])["epoch"] if h else None
+    ckpt["thresholds"] = thr; ckpt["best_epoch"] = best_epoch
     torch.save(ckpt, out / "best.pt")
-    log(f"best epoch {best['epoch']}; thresholds chosen on validation: waste {thr['waste']:.2f}")
-    return {"model": model, "history": history, "thresholds": thr, "best_epoch": best["epoch"], "val_pred": vp}
+    log(f"best epoch {best_epoch}; thresholds chosen on validation: waste {thr['waste']:.2f}")
+    return {"model": model, "thresholds": thr, "best_epoch": best_epoch, "val_pred": vp}
 
 
 def load_classifier(path, device="cpu", pretrained=False):

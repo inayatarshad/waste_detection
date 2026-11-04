@@ -61,6 +61,23 @@ Choose **Runtime > Change runtime type > T4 GPU**, run all cells, and click "Con
 asked. All outputs (checkpoints, ONNX files, reports, figures, scan maps) go to
 `MyDrive/waste_runs/`.
 
+## Re-running without losing time
+
+Everything slow is saved to Google Drive (`MyDrive/waste_runs/`), so a rerun skips work that is already done:
+
+| Saved on Drive | What it saves you |
+|---|---|
+| `aerialwaste_640.tar` | the 18.8 GB Zenodo download plus resizing (about 3 h); a rerun only unpacks it (a few minutes) |
+| `classifier_v1/baseline_features.npz` | the classic-baseline feature pass |
+| `classifier_v1/last.pt` (written after every epoch) | training: after a disconnect, re-run the notebook and it continues from the last finished epoch |
+| `classifier_v1/best.pt` | the best model so far; `USE_EXISTING_BEST = True` in the training cell skips training entirely |
+| `detector_v1/last_det.pt` | the same for the detector |
+| `pnoa_cache/` | downloaded Almeria orthophotos |
+| `almeria_labels/sheet_*.csv` | your labels, saved after every click |
+
+The test split is still scored only once: `test_report.json` is written the first time,
+and a later attempt stops with an error.
+
 ## Repository
 
 ```

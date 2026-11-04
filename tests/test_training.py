@@ -87,3 +87,44 @@ def test_prepare_cache_and_finetune_init(aw_root, tmp_path):
     train_classifier(cfg2, AW.WasteSceneDataset(tr, tmp_path / "cache", 48, True), AW.WasteSceneDataset(va, tmp_path / "cache", 48),
                      tmp_path / "b", device="cpu", log=logs.append)
     assert any("initialised from" in l for l in logs)
+
+
+def test_classifier_resumes_after_disconnect(aw_root, tmp_path):
+    """Simulate Colab dying after 2 of 4 epochs: the rerun must continue at epoch 3, not restart."""
+    recs = AW.load_records(aw_root / "training.json")
+    tr, va = AW.stratified_split(recs, 0.25)
+    mk = lambda: (AW.WasteSceneDataset(tr, aw_root / "images", 64, True), AW.WasteSceneDataset(va, aw_root / "images", 64))
+    train_classifier(_cfg(epochs=2), *mk(), tmp_path, device="cpu", log=lambda *a: None)
+    first = json.loads((tmp_path / "history.json").read_text())
+    logs = []
+    res = train_classifier(_cfg(epochs=4), *mk(), tmp_path, device="cpu", log=logs.append)
+    assert any("resumed" in l and "2 of 4" in l for l in logs)
+    assert [h["epoch"] for h in res["history"]] == [1, 2, 3, 4] and res["history"][:2] == first
+    _, ck = load_classifier(tmp_path / "best.pt")
+    assert "thresholds" in ck and ck["best_epoch"] in (1, 2, 3, 4)
+    # a finished run re-executed does no more training
+    logs = []
+    train_classifier(_cfg(epochs=4), *mk(), tmp_path, device="cpu", log=logs.append)
+    assert not any(l.startswith("epoch") for l in logs)
+
+
+def test_finalize_from_best_only(aw_root, tmp_path):
+    """Run stopped after best.pt was written but before thresholds (old code / disconnect)."""
+    from wastedet.train_cls import finalize_best
+    recs = AW.load_records(aw_root / "training.json")
+    tr, va = AW.stratified_split(recs, 0.25)
+    cfg = _cfg(epochs=1)
+    train_classifier(cfg, AW.WasteSceneDataset(tr, aw_root / "images", 64, True), AW.WasteSceneDataset(va, aw_root / "images", 64),
+                     tmp_path, device="cpu", log=lambda *a: None)
+    ck = torch.load(tmp_path / "best.pt", weights_only=False); ck.pop("thresholds"); torch.save(ck, tmp_path / "best.pt")
+    r = finalize_best(cfg, AW.WasteSceneDataset(va, aw_root / "images", 64), tmp_path, "cpu", log=lambda *a: None)
+    assert "waste" in r["thresholds"] and r["best_epoch"] == 1
+
+
+def test_detector_resumes(yolo_root, tmp_path):
+    tr = DS.load_split(yolo_root, "train"); va = DS.load_split(yolo_root, "valid")
+    mk = lambda e: DetConfig(size=128, epochs=e, batch_size=2, num_workers=0, amp=False, pretrained=False, max_steps_per_epoch=1)
+    train_detector(mk(1), DS.DumpsiteDetDataset(tr, 128, True), DS.DumpsiteDetDataset(va, 128), tmp_path, "cpu", log=lambda *a: None)
+    logs = []
+    r = train_detector(mk(2), DS.DumpsiteDetDataset(tr, 128, True), DS.DumpsiteDetDataset(va, 128), tmp_path, "cpu", log=logs.append)
+    assert any("resumed" in l for l in logs) and len(r["history"]) == 2

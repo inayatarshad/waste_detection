@@ -29,6 +29,7 @@ class DetConfig:
     pretrained: bool = True
     seed: int = 0
     max_steps_per_epoch: int | None = None
+    resume: bool = True          # continue from out_dir/last_det.pt after a Colab disconnect
 
 
 @torch.no_grad()
@@ -65,8 +66,15 @@ def train_detector(cfg: DetConfig, train_ds, val_ds, out_dir, device=None, log=p
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: (s + 1) / warm if s < warm else 0.5 * (1 + math.cos(math.pi * (s - warm) / max(1, total - warm))))
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and device != "cpu")
-    history, best = [], {"map50": -1.0}
-    for epoch in range(cfg.epochs):
+    history, best, start = [], {"map50": -1.0}, 0
+    last = out / "last_det.pt"
+    if cfg.resume and last.exists():
+        st = torch.load(last, map_location=device, weights_only=False)
+        model.load_state_dict(st["model"]); opt.load_state_dict(st["opt"])
+        sched.load_state_dict(st["sched"]); scaler.load_state_dict(st["scaler"])
+        history, best, start = st["history"], st["best"], st["epoch"]
+        log(f"resumed from {last}: {start} of {cfg.epochs} epochs already done")
+    for epoch in range(start, cfg.epochs):
         model.train(); train_ds.epoch = epoch
         t0, losses = time.time(), []
         for step, (imgs, targets) in enumerate(dl):
@@ -89,15 +97,19 @@ def train_detector(cfg: DetConfig, train_ds, val_ds, out_dir, device=None, log=p
         if m50 > best["map50"]:
             best = {"map50": m50, "epoch": epoch + 1}
             torch.save({"model": model.state_dict(), "config": asdict(cfg)}, out / "best_det.pt")
-    (out / "history_det.json").write_text(json.dumps(history, indent=2))
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "scaler": scaler.state_dict(), "epoch": epoch + 1, "history": history, "best": best},
+                   out / "last_det.pt.tmp")
+        (out / "last_det.pt.tmp").replace(last)
+        (out / "history_det.json").write_text(json.dumps(history, indent=2))
     ckpt = torch.load(out / "best_det.pt", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
     preds, gts = predict_det(model, val_ds, device, cfg.batch_size, cfg.num_workers)
     thr = M.best_det_threshold(preds, gts)["score_threshold"]
-    ckpt["score_threshold"] = thr; ckpt["best_epoch"] = best["epoch"]
+    ckpt["score_threshold"] = thr; ckpt["best_epoch"] = best.get("epoch")
     torch.save(ckpt, out / "best_det.pt")
-    log(f"best epoch {best['epoch']}; score threshold chosen on validation: {thr:.2f}")
-    return {"model": model, "history": history, "score_threshold": thr, "best_epoch": best["epoch"]}
+    log(f"best epoch {best.get('epoch')}; score threshold chosen on validation: {thr:.2f}")
+    return {"model": model, "history": history, "score_threshold": thr, "best_epoch": best.get("epoch")}
 
 
 def load_detector(path, device="cpu"):
