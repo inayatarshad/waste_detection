@@ -176,19 +176,26 @@ def train_classifier(cfg: ClsConfig, train_ds, val_ds, out_dir, device=None, log
         (out / "last.pt.tmp").replace(last)
         (out / "history.json").write_text(json.dumps(history, indent=2))
 
-    res = finalize_best(cfg, val_ds, out, device, log, best_epoch=best.get("epoch"))
+    # a run that had already finished keeps its thresholds; a run that trained now picks new ones
+    res = finalize_best(cfg, val_ds, out, device, log, best_epoch=best.get("epoch"), reuse=(start >= cfg.epochs))
     res["history"] = history
     return res
 
 
-def finalize_best(cfg: ClsConfig, val_ds, out_dir, device=None, log=print, best_epoch=None) -> dict:
+def finalize_best(cfg: ClsConfig, val_ds, out_dir, device=None, log=print, best_epoch=None, reuse=True) -> dict:
     """Load best.pt, choose the decision thresholds on validation and store them in best.pt.
-    Also usable on its own when training stopped early but best.pt exists."""
+    Also usable on its own when training stopped early but best.pt exists.
+    reuse=True: if best.pt already holds thresholds (chosen earlier on validation), keep them
+    and skip the validation pass - this matters on a CPU-only runtime."""
     out = Path(out_dir)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(out / "best.pt", map_location=device, weights_only=False)
     model = WasteClassifier(cfg.backbone, n_types=len(cfg.types), pretrained=False).to(device)
     model.load_state_dict(ckpt["model"])
+    if reuse and ckpt.get("thresholds"):
+        thr = ckpt["thresholds"]
+        log(f"using the saved model (best epoch {ckpt.get('best_epoch')}) and its saved thresholds: waste {thr['waste']:.2f}")
+        return {"model": model, "thresholds": thr, "best_epoch": ckpt.get("best_epoch"), "val_pred": None}
     vp = predict(model, val_ds, cfg.batch_size * 2, device, tta=cfg.tta, num_workers=cfg.num_workers, amp=cfg.amp)
     thr = choose_thresholds(vp, cfg.types)
     if best_epoch is None and (out / "history.json").exists():

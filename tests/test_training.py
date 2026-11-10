@@ -128,3 +128,15 @@ def test_detector_resumes(yolo_root, tmp_path):
     logs = []
     r = train_detector(mk(2), DS.DumpsiteDetDataset(tr, 128, True), DS.DumpsiteDetDataset(va, 128), tmp_path, "cpu", log=logs.append)
     assert any("resumed" in l for l in logs) and len(r["history"]) == 2
+
+
+def test_finished_run_reuses_saved_thresholds(aw_root, tmp_path):
+    """Re-running a finished training (e.g. on a CPU-only runtime) must not redo the validation pass."""
+    recs = AW.load_records(aw_root / "training.json")
+    tr, va = AW.stratified_split(recs, 0.25)
+    mk = lambda: (AW.WasteSceneDataset(tr, aw_root / "images", 64, True), AW.WasteSceneDataset(va, aw_root / "images", 64))
+    first = train_classifier(_cfg(epochs=2), *mk(), tmp_path, device="cpu", log=lambda *a: None)
+    logs = []
+    again = train_classifier(_cfg(epochs=2), *mk(), tmp_path, device="cpu", log=logs.append)
+    assert any("saved thresholds" in l for l in logs) and again["val_pred"] is None
+    assert again["thresholds"] == first["thresholds"]
