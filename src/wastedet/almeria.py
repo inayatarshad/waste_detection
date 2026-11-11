@@ -15,11 +15,23 @@ from .aerialwaste import Record, WasteSceneDataset
 from .scan import read_sheet
 
 
+def _sheet_rows(sheet_paths):
+    """One sheet or several (one per scanned area); a window labelled in two sheets is kept once."""
+    if isinstance(sheet_paths, (str, Path)):
+        sheet_paths = [sheet_paths]
+    seen = set()
+    for sp in sheet_paths:
+        for r in read_sheet(sp):
+            if r["file"] not in seen:
+                seen.add(r["file"]); yield r
+
+
 def records_from_sheet(sheet_path, n_types: int, plastic_index: int = 0) -> dict[str, list[Record]]:
     """Rows -> Records split by the sheet's spatial 'split' column (2 km blocks).
-    Only the plastic type is labelled in Almeria; the other types are marked unknown."""
+    Only the plastic type is labelled in Almeria; the other types are marked unknown.
+    `sheet_path` may be one sheet or a list of sheets."""
     out = {"train": [], "val": [], "test": []}
-    for r in read_sheet(sheet_path):
+    for r in _sheet_rows(sheet_path):
         types = np.zeros(n_types, np.float32)
         mask = np.zeros(n_types, np.float32)
         if r["plastic"] is not None:

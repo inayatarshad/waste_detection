@@ -2,16 +2,40 @@
   "description": "Scan areas in Almeria (Spain). bbox_lonlat = [lon_min, lat_min, lon_max, lat_max] in WGS84. Boxes are approximate outlines of the greenhouse districts; check them on a map and widen if needed.",
   "areas": {
     "nijar_demo": {
-      "bbox_lonlat": [-2.150, 36.895, -2.115, 36.920],
+      "bbox_lonlat": [
+        -2.15,
+        36.895,
+        -2.115,
+        36.92
+      ],
       "note": "About 3 x 3 km of the Campo de Nijar greenhouse belt; quick first test (about 16 chunks)."
     },
     "nijar_campo": {
-      "bbox_lonlat": [-2.250, 36.860, -2.050, 36.980],
+      "bbox_lonlat": [
+        -2.25,
+        36.86,
+        -2.05,
+        36.98
+      ],
       "note": "Campo de Nijar greenhouse district and its ramblas (about 18 x 13 km)."
     },
     "campo_de_dalias": {
-      "bbox_lonlat": [-2.900, 36.680, -2.580, 36.820],
+      "bbox_lonlat": [
+        -2.9,
+        36.68,
+        -2.58,
+        36.82
+      ],
       "note": "Poniente: El Ejido, Roquetas de Mar, Vicar, La Mojonera - the largest greenhouse area (about 29 x 15 km)."
+    },
+    "dalias_las_norias": {
+      "bbox_lonlat": [
+        -2.83,
+        36.745,
+        -2.792,
+        36.772
+      ],
+      "note": "About 3.4 x 3 km of Campo de Dalias around Las Norias de Daza / La Mojonera, with ramblas; second labelled area."
     }
   }
 }
